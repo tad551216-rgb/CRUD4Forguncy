@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CRUD一覧ジェネレーター ｜ CAS</title>
+<meta name="description" content="Forguncyのプロジェクトファイルからページ別CRUD一覧Excelを作る。すべて端末内で処理。">
+<meta name="theme-color" content="#20304F">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --paper:#FBF8F0; --paper2:#F3EDDD; --grid:#E5DDC6; --grid-bold:#D8CCAA;
+    --ink:#20304F; --ink-soft:#5A6B86; --line:#D9D0BC;
+    --vermilion:#D6452B;
+    --c:#2E8B57; --c-bg:#C6EFCE;
+    --r:#2D6DB5; --r-bg:#D6E6F7;
+    --u:#B5840C; --u-bg:#FFEB9C;
+    --d:#C0392B; --d-bg:#FFC7CE;
+    --radius:3px;
+    --mono:"SFMono-Regular",ui-monospace,"Consolas","Courier New",monospace;
+    --gothic:"Hiragino Kaku Gothic ProN","Hiragino Sans","Meiryo","Yu Gothic UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:var(--gothic); color:var(--ink); background:var(--paper);
+    /* 方眼紙 */
+    background-image:
+      linear-gradient(var(--grid) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:22px 22px;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top) 0 0;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:26px 18px 60px}
+
+  /* ── ヘッダ ── */
+  header{margin-bottom:18px}
+  .eyebrow{font:600 12px/1.4 var(--mono); letter-spacing:.18em; color:var(--ink-soft); text-transform:uppercase}
+  h1{font-size:clamp(26px,6vw,38px); margin:.12em 0 .1em; letter-spacing:.01em; font-weight:800}
+  .sub{color:var(--ink-soft); font-size:14px; margin:0}
+  .crud-legend{display:flex; gap:7px; margin:16px 0 0; flex-wrap:wrap}
+  .chip{
+    font:700 13px/1 var(--mono); padding:7px 11px; border:1.5px solid currentColor;
+    border-radius:var(--radius); display:inline-flex; gap:6px; align-items:center;
+  }
+  .chip b{font-size:15px}
+  .chip.c{color:var(--c); background:var(--c-bg)}
+  .chip.r{color:var(--r); background:var(--r-bg)}
+  .chip.u{color:var(--u); background:var(--u-bg)}
+  .chip.d{color:var(--d); background:var(--d-bg)}
+
+  /* ── 機密バナー ── */
+  .privacy{
+    display:flex; gap:11px; align-items:flex-start;
+    background:#fff; border:1.5px solid var(--ink); border-radius:var(--radius);
+    padding:12px 14px; margin:18px 0 22px; box-shadow:3px 3px 0 var(--grid-bold);
+  }
+  .privacy svg{flex:0 0 auto; margin-top:2px}
+  .privacy p{margin:0; font-size:13px}
+  .privacy strong{font-weight:800}
+
+  /* ── ドロップゾーン ── */
+  .slot{
+    position:relative; background:#fff; border:2px dashed var(--line); border-radius:var(--radius);
+    padding:20px 18px; margin-bottom:14px; cursor:pointer; transition:border-color .15s, background .15s;
+  }
+  .slot:hover,.slot:focus-visible{border-color:var(--vermilion); outline:none}
+  .slot.drag{border-color:var(--vermilion); background:#FFF6F3}
+  .slot.filled{border-style:solid; border-color:var(--c)}
+  .slot .num{
+    position:absolute; top:-11px; left:14px; background:var(--ink); color:#fff;
+    font:700 12px/1 var(--mono); padding:4px 8px; border-radius:var(--radius); letter-spacing:.05em;
+  }
+  .slot .tag{font:700 11px/1 var(--mono); letter-spacing:.1em; color:var(--ink-soft)}
+  .slot .tag.req{color:var(--vermilion)}
+  .slot h3{margin:5px 0 3px; font-size:16px}
+  .slot .hint{margin:0; font-size:12.5px; color:var(--ink-soft)}
+  .slot .file{
+    display:none; margin-top:9px; font:600 13px/1.4 var(--mono); color:var(--c);
+    word-break:break-all;
+  }
+  .slot.filled .file{display:block}
+  .slot.filled .hint{display:none}
+  .slot .clear{
+    position:absolute; top:12px; right:12px; display:none; border:1px solid var(--line);
+    background:var(--paper2); border-radius:var(--radius); font-size:12px; padding:3px 8px; cursor:pointer; color:var(--ink-soft);
+  }
+  .slot.filled .clear{display:inline-block}
+
+  /* ── 実行ボタン ── */
+  .go{
+    width:100%; margin-top:8px; padding:16px; font-family:var(--gothic); font-size:17px; font-weight:800;
+    color:#fff; background:var(--vermilion); border:none; border-radius:var(--radius);
+    box-shadow:4px 4px 0 var(--ink); cursor:pointer; transition:transform .08s, box-shadow .08s;
+    letter-spacing:.04em;
+  }
+  .go:hover:not(:disabled){transform:translate(-1px,-1px); box-shadow:5px 5px 0 var(--ink)}
+  .go:active:not(:disabled){transform:translate(2px,2px); box-shadow:2px 2px 0 var(--ink)}
+  .go:disabled{background:#C9C2B1; box-shadow:4px 4px 0 var(--grid-bold); cursor:not-allowed}
+
+  /* ── 進捗 ── */
+  .progress{display:none; margin-top:20px; background:#fff; border:1.5px solid var(--line); border-radius:var(--radius); padding:16px}
+  .progress.show{display:block}
+  .progress .label{font:600 13px/1.5 var(--mono); color:var(--ink); display:flex; justify-content:space-between}
+  .bar{height:10px; background:var(--paper2); border:1px solid var(--line); border-radius:99px; overflow:hidden; margin-top:9px}
+  .bar > i{display:block; height:100%; width:0; background:linear-gradient(90deg,var(--vermilion),#E8704E); transition:width .2s}
+
+  /* ── 結果 ── */
+  .result{display:none; margin-top:22px; background:#fff; border:1.5px solid var(--ink); border-radius:var(--radius); box-shadow:4px 4px 0 var(--grid-bold); overflow:hidden}
+  .result.show{display:block}
+  .result .head{background:var(--ink); color:#fff; padding:12px 16px; font-weight:800; font-size:15px; display:flex; align-items:center; gap:8px}
+  .result .body{padding:16px}
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:14px}
+  .stat{border:1px solid var(--line); border-radius:var(--radius); padding:10px; text-align:center; background:var(--paper)}
+  .stat .n{font:800 24px/1 var(--mono)}
+  .stat .k{font-size:11px; color:var(--ink-soft); margin-top:5px}
+  .stat.d .n{color:var(--d)}
+  .areas{font-size:12.5px; border-top:1px dashed var(--line); padding-top:12px; margin-bottom:14px}
+  .areas .row{display:flex; justify-content:space-between; padding:2px 0; font-family:var(--mono)}
+  .download{
+    width:100%; padding:14px; font-family:var(--gothic); font-size:16px; font-weight:800; color:#fff;
+    background:var(--c); border:none; border-radius:var(--radius); cursor:pointer; box-shadow:3px 3px 0 var(--ink);
+  }
+  .download:hover{transform:translate(-1px,-1px)}
+
+  /* ── エラー ── */
+  .error{display:none; margin-top:18px; background:#FFF1EE; border:1.5px solid var(--d); border-radius:var(--radius); padding:13px 15px; font-size:13.5px; color:var(--d)}
+  .error.show{display:block}
+
+  footer{margin-top:30px; text-align:center; font:11px/1.6 var(--mono); color:var(--ink-soft)}
+  .badge{display:inline-block; border:1px solid var(--line); border-radius:99px; padding:2px 9px; margin:0 3px}
+
+  @media (max-width:480px){ .stats{grid-template-columns:repeat(3,1fr)} .stat .n{font-size:20px} }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">CAS / Forguncy 保守ツール</div>
+    <h1>CRUD一覧ジェネレーター</h1>
+    <p class="sub">Forguncyの <code>.fgcp</code> を渡すと、ページ別CRUD一覧Excelを作ります。</p>
+    <div class="crud-legend" aria-label="凡例">
+      <span class="chip c"><b>C</b>作成</span>
+      <span class="chip r"><b>R</b>参照</span>
+      <span class="chip u"><b>U</b>更新</span>
+      <span class="chip d"><b>D</b>削除</span>
+    </div>
+  </header>
+
+  <div class="privacy">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#20304F" stroke-width="2">
+      <rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+    </svg>
+    <p><strong>ファイルはこの端末から出ません。</strong>解凍・解析・Excel生成はすべてブラウザ内で実行され、どこにも送信・保存されません。CASプロジェクトを安全に扱えます。</p>
+  </div>
+
+  <!-- ① .fgcp -->
+  <div class="slot" id="slotFgcp" tabindex="0" role="button" aria-label=".fgcp を選択">
+    <span class="num">①</span>
+    <button class="clear" data-clear="fgcp" type="button">×</button>
+    <span class="tag req">必須 ・ .fgcp</span>
+    <h3>Forguncyプロジェクトファイル</h3>
+    <p class="hint">ここにドロップ、またはタップして選択。コピーを推奨（元ファイルは変更しません）。</p>
+    <p class="file" id="fileFgcp"></p>
+    <input type="file" id="inputFgcp" accept=".fgcp,.zip" hidden>
+  </div>
+
+  <!-- ② Forguncyドキュメント -->
+  <div class="slot" id="slotFgdoc" tabindex="0" role="button" aria-label="Forguncyドキュメントを選択">
+    <span class="num">②</span>
+    <button class="clear" data-clear="fgdoc" type="button">×</button>
+    <span class="tag">任意 ・ .xlsx</span>
+    <h3>Forguncyドキュメント（ページ番号用）</h3>
+    <p class="hint">「ドキュメント生成」で出力したExcel。付けるとページにNo.が入ります。省略可。</p>
+    <p class="file" id="fileFgdoc"></p>
+    <input type="file" id="inputFgdoc" accept=".xlsx" hidden>
+  </div>
+
+  <button class="go" id="go" disabled>CRUD一覧を生成</button>
+
+  <div class="progress" id="progress">
+    <div class="label"><span id="progLabel">準備中…</span><span id="progPct"></span></div>
+    <div class="bar"><i id="progBar"></i></div>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <div class="result" id="result">
+    <div class="head">✓ 生成完了</div>
+    <div class="body">
+      <div class="stats">
+        <div class="stat"><div class="n" id="stTotal">–</div><div class="k">総ページ</div></div>
+        <div class="stat"><div class="n" id="stWrite">–</div><div class="k">書込み C/U/D</div></div>
+        <div class="stat d"><div class="n" id="stDel">–</div><div class="k">削除ページ</div></div>
+      </div>
+      <div class="areas" id="areas"></div>
+      <button class="download" id="download">Excelをダウンロード</button>
+    </div>
+  </div>
+
+  <footer>
+    <span class="badge" id="offlineBadge">オフライン対応</span>
+    <span class="badge">v1.0</span>
+    <span class="badge">端末内処理</span><br>
+    generate_crud.py 準拠 ・ JSZip + ExcelJS
+  </footer>
+</div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/exceljs.min.js"></script>
+<script src="crud-core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
