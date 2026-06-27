@@ -126,6 +126,16 @@
   }
   .download:hover{transform:translate(-1px,-1px)}
 
+  /* ── ファイル選択ボタン ── */
+  .pick{
+    display:inline-flex; align-items:center; gap:7px; margin-top:11px;
+    font:700 14px/1 var(--gothic); color:#fff; background:var(--ink);
+    padding:11px 16px; border:none; border-radius:var(--radius); cursor:pointer;
+    box-shadow:2px 2px 0 var(--grid-bold);
+  }
+  .pick:active{transform:translate(1px,1px); box-shadow:1px 1px 0 var(--grid-bold)}
+  .slot.filled .pick{background:var(--c)}
+
   /* ── エラー ── */
   .error{display:none; margin-top:18px; background:#FFF1EE; border:1.5px solid var(--d); border-radius:var(--radius); padding:13px 15px; font-size:13.5px; color:var(--d)}
   .error.show{display:block}
@@ -164,9 +174,10 @@
     <button class="clear" data-clear="fgcp" type="button">×</button>
     <span class="tag req">必須 ・ .fgcp</span>
     <h3>Forguncyプロジェクトファイル</h3>
-    <p class="hint">ここにドロップ、またはタップして選択。コピーを推奨（元ファイルは変更しません）。</p>
+    <p class="hint">タップして <code>.fgcp</code> を選択（PCはドラッグ&ドロップも可）。コピー推奨（元ファイルは変更しません）。</p>
     <p class="file" id="fileFgcp"></p>
-    <input type="file" id="inputFgcp" accept=".fgcp,.zip" hidden>
+    <button class="pick" type="button">📁 ファイルを選択</button>
+    <input type="file" id="inputFgcp" hidden>
   </div>
 
   <!-- ② Forguncyドキュメント -->
@@ -177,7 +188,8 @@
     <h3>Forguncyドキュメント（ページ番号用）</h3>
     <p class="hint">「ドキュメント生成」で出力したExcel。付けるとページにNo.が入ります。省略可。</p>
     <p class="file" id="fileFgdoc"></p>
-    <input type="file" id="inputFgdoc" accept=".xlsx" hidden>
+    <button class="pick" type="button">📁 Excelを選択</button>
+    <input type="file" id="inputFgdoc" hidden>
   </div>
 
   <button class="go" id="go" disabled>CRUD一覧を生成</button>
