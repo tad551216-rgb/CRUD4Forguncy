@@ -215,25 +215,37 @@
   }
 
   // =====================================================================
-  // 4. .fgcp 解凍 → ページ抽出
+  // 4. .fgcp 解凍 → ページ抽出（フォルダ名の揺れに対応）
+  //    PAGE / PAGES / Page / Pages いずれでも拾う。TABLES も収集。
   // =====================================================================
 
-  async function extractPagesFromFgcp(arrayBuffer, onProgress) {
-    const zip = await JSZip.loadAsync(arrayBuffer);
-    // Pages 直下の *.json のみ（サブフォルダ除外）
-    const entries = [];
-    zip.forEach((relPath, file) => {
-      if (/^Pages\/[^/]+\.json$/i.test(relPath) && !file.dir) entries.push(file);
-    });
-    if (entries.length === 0) {
-      throw new Error('Pages フォルダ内の *.json が見つかりません。正しい .fgcp ファイルか確認してください。');
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  function pathParts(p) { return String(p).split('/').filter(Boolean); }
+  function baseName(p) { const a = pathParts(p); return (a[a.length - 1] || '').replace(/\.json$/i, ''); }
+  function isPageJson(p) { const a = pathParts(p); return a.length >= 2 && /^pages?$/i.test(a[0]) && /\.json$/i.test(a[a.length - 1]); }
+  function isTableJson(p) { const a = pathParts(p); return a.length >= 2 && /^tables?$/i.test(a[0]) && /\.json$/i.test(a[a.length - 1]); }
 
+  function collectPageEntries(zip) {
+    const entries = [];
+    zip.forEach((relPath, file) => { if (!file.dir && isPageJson(relPath)) entries.push(file); });
+    entries.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    return entries;
+  }
+
+  function collectTableNames(zip) {
+    const set = new Set();
+    zip.forEach((relPath, file) => { if (!file.dir && isTableJson(relPath)) set.add(baseName(relPath)); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ja'));
+  }
+
+  async function pagesFromZip(zip, onProgress) {
+    const entries = collectPageEntries(zip);
+    if (entries.length === 0) {
+      throw new Error('ページのJSONが見つかりません（PAGE / PAGES / Pages フォルダ）。「対応診断」でフォルダ構成を確認してください。');
+    }
     const pages = [];
     let i = 0;
     for (const file of entries) {
-      const pageName = file.name.replace(/^Pages\//i, '').replace(/\.json$/i, '');
+      const pageName = baseName(file.name);
       const text = await file.async('string');
       const crud = parsePageJson(text, pageName);
       const allTables = [].concat(crud.C, crud.R, crud.U, crud.D).join(' ');
@@ -253,6 +265,11 @@
       }
     }
     return pages;
+  }
+
+  async function extractPagesFromFgcp(arrayBuffer, onProgress) {
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    return pagesFromZip(zip, onProgress);
   }
 
   // =====================================================================
@@ -575,7 +592,8 @@
   function mmNode(s) { return String(s).replace(/[^0-9A-Za-z\u3040-\u30FF\u4E00-\u9FFF]/g, '_'); }
   function mmLabel(s) { return String(s).replace(/"/g, '＂'); }
 
-  function buildMermaidDoc(pages) {
+  function buildMermaidDoc(pages, extra) {
+    extra = extra || {};
     const today = new Date().toISOString().slice(0, 10);
     const nameToArea = {};
     for (const p of pages) nameToArea[p.name] = p.area;
@@ -648,6 +666,20 @@
     if (shared.length === 0) md += '（なし）\n';
     else for (const [t, s] of shared) md += `- **${t}** … ${Array.from(s).sort((a, b) => a.localeCompare(b, 'ja')).join('、')}\n`;
     md += '\n';
+
+    // 未使用テーブル（TABLES定義はあるが、どのページも操作しない）
+    if (extra.definedTables && extra.definedTables.length) {
+      md += `## 未使用テーブル候補（定義はあるが操作なし）\n\n`;
+      if (!extra.namesAlign) {
+        md += '> テーブル定義名とページの参照名が一致しないため、未使用判定は保留しています。\n\n';
+      } else if (!extra.orphanTables || extra.orphanTables.length === 0) {
+        md += '（なし。定義済みテーブルはすべていずれかのページで操作されています）\n\n';
+      } else {
+        md += `定義テーブル ${extra.definedTables.length} 件中、どのページからも操作されていない ${extra.orphanTables.length} 件：\n\n`;
+        for (const t of extra.orphanTables) md += `- ${t}\n`;
+        md += '\n';
+      }
+    }
     return md;
   }
 
@@ -679,29 +711,49 @@
   async function diagnose(arrayBuffer, onProgress) {
     const zip = await JSZip.loadAsync(arrayBuffer);
     const pageEntries = [];
+    const tableEntries = [];
+    const folders = {}; // 直下フォルダ名 → JSON件数
     let anyJson = 0;
     zip.forEach((p, f) => {
       if (f.dir) return;
-      if (/\.json$/i.test(p)) anyJson++;
-      if (/^Pages\/[^/]+\.json$/i.test(p)) pageEntries.push(f);
+      const isJson = /\.json$/i.test(p);
+      if (isJson) {
+        anyJson++;
+        const top = pathParts(p)[0] || '(直下)';
+        folders[top] = (folders[top] || 0) + 1;
+      }
+      if (isPageJson(p)) pageEntries.push(f);
+      if (isTableJson(p)) tableEntries.push(f);
     });
+    pageEntries.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 
     const acc = { types: {}, updateTypes: {} };
     let parseOk = 0, withSig = 0, noAttach = 0;
     const parseErrors = [];
     const total = pageEntries.length;
+    let samplePageKeys = [];
     let i = 0;
     for (const f of pageEntries) {
-      const name = f.name.replace(/^Pages\//i, '').replace(/\.json$/i, '');
+      const name = baseName(f.name);
       const raw = await f.async('string');
       if (raw.lastIndexOf('}//') > 0) withSig++;
       let d;
       try { d = loadJsonText(raw); parseOk++; }
       catch (e) { parseErrors.push({ page: name, error: String(e) }); i++; continue; }
+      if (samplePageKeys.length === 0 && d && typeof d === 'object') samplePageKeys = Object.keys(d);
       if (!d.AttachInfos || typeof d.AttachInfos !== 'object') noAttach++;
       walkTypes(d, acc, 0);
       i++;
       if (onProgress && (i % 20 === 0 || i === total)) { onProgress(i, total); await new Promise((r) => setTimeout(r, 0)); }
+    }
+
+    // テーブルJSONの構造サンプル（最初の1件の最上位キーのみ。値は出さない）
+    let sampleTableKeys = [];
+    if (tableEntries.length) {
+      try {
+        const td = loadJsonText(await tableEntries[0].async('string'));
+        if (td && typeof td === 'object') sampleTableKeys = Object.keys(td);
+      } catch (e) { /* ignore */ }
     }
 
     const cmds = {}, cells = {}, others = {};
@@ -719,15 +771,16 @@
     let verdict, verdictText;
     if (total === 0) {
       verdict = 'ng';
+      const folderList = Object.keys(folders).join(' / ') || '(なし)';
       verdictText = anyJson > 0
-        ? 'Pages/ 直下に *.json がありません。別のフォルダ構成（古い形式の可能性）です。'
-        : 'JSONページが見つかりません。.fgcp ではない、または未対応の形式の可能性があります。';
+        ? `ページのJSON（PAGE / PAGES / Pages フォルダ）が見つかりません。検出フォルダ: ${folderList}。フォルダ名が異なる可能性があります。`
+        : 'JSONが見つかりません。.fgcp ではない、または未対応の形式の可能性があります。';
     } else if (parseOk === 0) {
       verdict = 'ng';
       verdictText = 'ページJSONを1件もパースできませんでした。構造が大きく異なる可能性があります。';
     } else if (noAttach >= Math.ceil(total * 0.5)) {
       verdict = 'ng';
-      verdictText = '多くのページで AttachInfos が見つかりません。この版ではセルの格納構造が異なり、抽出できない可能性があります。';
+      verdictText = '多くのページで AttachInfos が見つかりません。この版ではセルの格納構造が異なり、抽出できない可能性があります。最上位キーを開発者に共有してください。';
     } else if (unknownCmds.length > 0 || (acc.updateTypes['(未指定)'] || 0) > 0 || noAttach > 0 || parseErrors.length > 0) {
       verdict = 'warn';
       verdictText = 'おおむね使えますが、未対応のコマンドやUpdateType未指定などがあり、一部の書き込みが拾えていない可能性があります。出力件数を実態と照合してください。';
@@ -740,6 +793,8 @@
       verdict, verdictText,
       pagesFound: total, anyJson, parseOk, parseErrors,
       withSignature: withSig, noAttach,
+      folders, tablesFound: tableEntries.length,
+      samplePageKeys, sampleTableKeys,
       knownCmds, unknownCmds, cmdCounts: cmds,
       knownCells, unknownCells, cellCounts: cells,
       otherTypes: others,
@@ -756,9 +811,11 @@
     const report = (msg) => { if (onProgress) onProgress({ stage: 'message', message: msg }); };
 
     report('.fgcp を解凍中…');
-    const pages = await extractPagesFromFgcp(fgcpBuffer, (done, total) => {
+    const zip = await JSZip.loadAsync(fgcpBuffer);
+    const pages = await pagesFromZip(zip, (done, total) => {
       if (onProgress) onProgress({ stage: 'parse', done, total });
     });
+    const definedTables = collectTableNames(zip);
 
     let noMap = {};
     if (fgdocBuffer) {
@@ -775,18 +832,28 @@
       return a.name.localeCompare(b.name, 'ja');
     });
 
+    // 未使用テーブル判定（TABLES定義はあるがどのページも操作しない）
+    const touched = new Set();
+    for (const p of pages) for (const t of new Set([].concat(p.C, p.U, p.D, p.R))) touched.add(t);
+    const overlap = definedTables.filter((t) => touched.has(t)).length;
+    const namesAlign = definedTables.length > 0 && touched.size > 0 && (overlap / touched.size) >= 0.3;
+    const orphanTables = namesAlign ? definedTables.filter((t) => !touched.has(t)) : [];
+
     report('Excel を生成中…');
     const wb = buildWorkbook(pages);
-    const mermaid = buildMermaidDoc(pages);
+    const mermaid = buildMermaidDoc(pages, { definedTables, orphanTables, namesAlign });
 
     const stats = {
       total: pages.length,
       write: pages.filter((p) => p.C.length || p.U.length || p.D.length).length,
       del: pages.filter((p) => p.D.length).length,
       numbered: Object.keys(noMap).length,
+      definedTables: definedTables.length,
+      orphanTables: orphanTables.length,
+      tableNamesAlign: namesAlign,
       areas: areaCounts(pages),
     };
-    return { workbook: wb, pages, stats, mermaid };
+    return { workbook: wb, pages, stats, mermaid, definedTables, orphanTables };
   }
 
   return {

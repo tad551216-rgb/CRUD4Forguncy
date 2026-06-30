@@ -109,9 +109,15 @@
     $('stWrite').textContent = stats.write;
     $('stDel').textContent = stats.del;
     const areas = Object.keys(stats.areas).sort((a, b) => a.localeCompare(b, 'ja'));
+    let extra = '';
+    if (stats.numbered) extra += `<div class="row" style="color:var(--ink-soft)"><span>No.付与</span><span>${stats.numbered}件</span></div>`;
+    if (stats.definedTables) {
+      extra += `<div class="row" style="color:var(--ink-soft)"><span>TABLES定義</span><span>${stats.definedTables}件</span></div>`;
+      if (stats.tableNamesAlign) extra += `<div class="row" style="color:var(--ink-soft)"><span>未使用テーブル候補</span><span>${stats.orphanTables}件</span></div>`;
+    }
     $('areas').innerHTML = areas.map((a) =>
       `<div class="row"><span>${escapeHtml(a)}</span><span>${stats.areas[a]}</span></div>`
-    ).join('') + (stats.numbered ? `<div class="row" style="color:var(--ink-soft)"><span>No.付与</span><span>${stats.numbered}件</span></div>` : '');
+    ).join('') + extra;
     $('result').classList.add('show');
     $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -176,20 +182,26 @@
     const rows = [
       ['ページJSON 検出', d.pagesFound + ' 件'],
       ['パース成功', d.parseOk + ' / ' + d.pagesFound + (d.parseErrors.length ? '（失敗 ' + d.parseErrors.length + '）' : '')],
+      ['TABLES 定義', (d.tablesFound || 0) + ' 件'],
       ['AttachInfos 無し', d.noAttach + ' ページ'],
       ['末尾署名あり', d.withSignature + ' / ' + d.pagesFound],
     ];
+    const folderStr = Object.keys(d.folders || {}).sort().map((k) => `${k}:${d.folders[k]}`).join('  ');
+    if (folderStr) rows.push(['JSONフォルダ構成', folderStr]);
     $('diagGrid').innerHTML = rows.map((r) =>
       `<div class="grow"><span class="k">${r[0]}</span><span class="v">${escapeHtml(String(r[1]))}</span></div>`).join('');
 
     const pick = (keys, counts) => { const o = {}; keys.forEach((t) => o[t] = counts[t]); return o; };
     const utRows = Object.keys(d.updateTypes).sort().map((k) => `${k}:${d.updateTypes[k]}`).join('  ') || 'なし';
+    const keyChips = (arr) => (arr && arr.length) ? arr.map((k) => `<span class="tag2">${escapeHtml(k)}</span>`).join('') : '<span class="k" style="color:var(--ink-soft)">—</span>';
 
     $('diagTypes').innerHTML =
       '<h4>認識できるコマンド</h4>' + chips(pick(d.knownCmds, d.cmdCounts), false) +
       '<h4>未対応のコマンド（拾えない可能性）</h4>' + chips(pick(d.unknownCmds, d.cmdCounts), true) +
       (d.unknownCells.length ? '<h4>未対応のセル種別</h4>' + chips(pick(d.unknownCells, d.cellCounts), true) : '') +
-      '<h4>UpdateType の内訳（「(未指定)」が多いと C↔U の取り違え注意）</h4><span class="tag2">' + escapeHtml(utRows) + '</span>';
+      '<h4>UpdateType の内訳（「(未指定)」が多いと C↔U の取り違え注意）</h4><span class="tag2">' + escapeHtml(utRows) + '</span>' +
+      '<h4>ページJSONの最上位キー</h4>' + keyChips(d.samplePageKeys) +
+      '<h4>テーブルJSONの最上位キー</h4>' + keyChips(d.sampleTableKeys);
 
     $('diagPanel').classList.add('show');
     $('diagPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
