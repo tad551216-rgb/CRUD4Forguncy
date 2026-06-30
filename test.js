@@ -115,6 +115,6 @@ async function buildFgcp() {
   assert(heavy.note.includes('要注意'), '5テーブル書込みで要注意');
   assert(heavy.area === 'F 粗利分析', '粗利→F 粗利分析: ' + heavy.area);
   assert(result.stats.del >= 1, '削除ページ数 >= 1');
-  assert(verify.worksheets.length === 4, '4シート生成');
+  assert(verify.worksheets.length === 5, '5シート生成');
   console.log('\n完了。/tmp/test_output.xlsx を生成しました。');
 })().catch(e => { console.error(e); process.exitCode = 1; });

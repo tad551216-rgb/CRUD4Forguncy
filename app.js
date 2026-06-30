@@ -3,7 +3,7 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
 
-  const state = { fgcp: null, fgdoc: null, blob: null, filename: null };
+  const state = { fgcp: null, fgdoc: null, blob: null, filename: null, mermaid: null, mdName: null };
 
   // ---- ドロップゾーン配線 ----
   function wireSlot(slotId, inputId, fileLabelId, kind, accept) {
@@ -90,6 +90,8 @@
       state.blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       state.filename = `ページ別CRUD一覧_${today}.xlsx`;
+      state.mermaid = result.mermaid || '';
+      state.mdName = `データ関連図_${today}.md`;
 
       setProgress('完了', 100);
       setTimeout(hideProgress, 400);
@@ -121,6 +123,16 @@
     const url = URL.createObjectURL(state.blob);
     const a = document.createElement('a');
     a.href = url; a.download = state.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  });
+
+  $('downloadMd').addEventListener('click', () => {
+    if (!state.mermaid) return;
+    const blob = new Blob([state.mermaid], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = state.mdName;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   });

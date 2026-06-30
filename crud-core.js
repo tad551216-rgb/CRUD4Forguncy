@@ -14,6 +14,8 @@
 })(typeof self !== 'undefined' ? self : this, function (JSZip, ExcelJS) {
   'use strict';
 
+  const DISCLAIMER = '免責: 本ツールおよび生成物は無保証で提供されます。出力結果の正確性・完全性は保証されません。ご利用は自己責任で行ってください。本ツールの使用または使用不能、出力結果の利用によって生じたいかなる損害についても、作者・提供者は一切の責任を負いません。';
+
   // =====================================================================
   // 1. ページJSON 解析 (fgparse.py 由来)
   // =====================================================================
@@ -67,7 +69,7 @@
       return { C: [], R: [], U: [], D: [], transitions: [], error: String(e) };
     }
 
-    const cSet = new Set(), uSet = new Set(), dSet = new Set(), rSet = new Set(), trSet = new Set();
+    const cSet = new Set(), uSet = new Set(), dSet = new Set(), rSet = new Set(), trSet = new Set(), dncSet = new Set();
 
     const attaches = d.AttachInfos || {};
     // ── リストビュー・バインディング・選択肢から R ──
@@ -98,7 +100,10 @@
       let m;
       if ((m = line.match(/・DB追加: \[([^\]]+)\]/))) cSet.add(m[1].trim());
       if ((m = line.match(/・DB更新: \[([^\]]+)\]/))) uSet.add(m[1].trim());
-      if ((m = line.match(/・DB削除: \[([^\]]+)\]/))) dSet.add(m[1].trim());
+      if ((m = line.match(/・DB削除: \[([^\]]+)\]/))) {
+        const tbl = m[1].trim(); dSet.add(tbl);
+        if (!/確認ダイアログあり/.test(line)) dncSet.add(tbl);
+      }
       if ((m = line.match(/・画面遷移→ \[([^\]]+)\]/))) trSet.add(m[1].trim());
       if ((m = line.match(/・ポップアップ表示→ \[([^\]]+)\]/))) trSet.add(m[1].trim());
       if ((m = line.match(/・データ検索: \[([^\]]+)\]/))) rSet.add(m[1].trim());
@@ -117,6 +122,7 @@
       R: sortTables(rSet),
       U: sortTables(uSet),
       D: sortTables(dSet),
+      Dnoconfirm: sortTables(dncSet),
       transitions: Array.from(trSet).sort((a, b) => a.localeCompare(b, 'ja')),
     };
   }
@@ -235,6 +241,7 @@
         no: null,
         name: pageName,
         C: crud.C, R: crud.R, U: crud.U, D: crud.D,
+        Dnoconfirm: crud.Dnoconfirm,
         transitions: crud.transitions,
         area: classifyArea(pageName, allTables),
         note: getNote(pageName, crud.C, crud.U, crud.D),
@@ -339,6 +346,7 @@
     buildSummary(wb, pages);
     buildMatrix(wb, pages);
     buildTableIndex(wb, pages);
+    buildImpact(wb, pages);
     buildDeletePages(wb, pages);
     return wb;
   }
@@ -401,6 +409,14 @@
     const last = 20 + areas.length;
     ws.getCell(last, 1).value = '合計'; ws.getCell(last, 1).font = F.BOLD;
     ws.getCell(last, 2).value = areas.reduce((a, k) => a + counts[k], 0); ws.getCell(last, 2).font = F.BOLD;
+
+    const dr = last + 2;
+    ws.mergeCells(dr, 1, dr, 2);
+    const dc = ws.getCell(dr, 1);
+    dc.value = DISCLAIMER;
+    dc.font = F.ITALIC_GRAY;
+    dc.alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(dr).height = 60;
   }
 
   function buildMatrix(wb, pages) {
@@ -478,22 +494,161 @@
     });
   }
 
-  function buildDeletePages(wb, pages) {
-    const ws = wb.addWorksheet('削除ページ(要注意)');
-    [5, 38, 40].forEach((w, i) => ws.getColumn(i + 1).width = w);
+  function buildImpact(wb, pages) {
+    const ws = wb.addWorksheet('改修インパクト');
+    [34, 7, 7, 7, 11, 13, 30, 8, 16].forEach((w, i) => ws.getColumn(i + 1).width = w);
+    ws.getCell(1, 1).value = 'テーブル別 改修インパクト（このテーブルを直すと何に響くか）'; ws.getCell(1, 1).font = F.BOLD;
+    ws.getCell(2, 1).value = '影響度 = (C+U)×1 + D×3 + 参照×0.2。複数領域がさわる／削除されるテーブルは要注意。'; ws.getCell(2, 1).font = F.ITALIC_GRAY;
+    ['テーブル名', 'C', 'U', 'D', 'R参照のみ', '操作ページ(のべ)', '業務領域', '影響度', 'リスク'].forEach((h, i) => hdr(ws, 4, i + 1, h));
 
-    ws.getCell(1, 1).value = 'レコード削除(D)を行うページ ― 改修時は特に注意'; ws.getCell(1, 1).font = F.BOLD;
-    ['No', 'ページ名', '削除対象テーブル'].forEach((h, i) => hdr(ws, 2, i + 1, h));
-
-    const del = pages.filter((p) => p.D.length);
-    del.forEach((p, idx) => {
-      const r = 3 + idx;
-      const rowData = [p.no, p.name, p.D.join(', ')];
-      rowData.forEach((v, ci) => {
-        const cell = ws.getCell(r, ci + 1);
-        cell.value = v; cell.font = F.DATA; cell.alignment = WRAP_TOP; cell.fill = fill(C.DELROW);
-      });
+    const tc = {}, tu = {}, td = {}, tr = {}, areas = {};
+    const bump = (o, t) => { o[t] = (o[t] || 0) + 1; };
+    for (const p of pages) {
+      const touched = new Set([].concat(p.C, p.U, p.D, p.R));
+      for (const t of p.C) bump(tc, t);
+      for (const t of p.U) bump(tu, t);
+      for (const t of p.D) bump(td, t);
+      const rOnly = p.R.filter((t) => !p.C.includes(t) && !p.U.includes(t) && !p.D.includes(t));
+      for (const t of rOnly) bump(tr, t);
+      for (const t of touched) { (areas[t] = areas[t] || new Set()).add(p.area); }
+    }
+    const all = Array.from(new Set([].concat(Object.keys(tc), Object.keys(tu), Object.keys(td), Object.keys(tr))));
+    const rows = all.map((t) => {
+      const c = tc[t] || 0, u = tu[t] || 0, d = td[t] || 0, r = tr[t] || 0;
+      const aset = areas[t] || new Set();
+      const score = Math.ceil((c + u) * 1 + d * 3 + r * 0.2);
+      let risk;
+      if (d > 0) risk = '高（削除あり）';
+      else if (aset.size >= 2) risk = '中（複数領域）';
+      else if (c + u >= 3) risk = '中（多書込み）';
+      else risk = '低';
+      return { t, c, u, d, r, total: c + u + d + r, areas: Array.from(aset).sort((a, b) => a.localeCompare(b, 'ja')), score, risk };
     });
+    rows.sort((a, b) => b.score - a.score || a.t.localeCompare(b.t, 'ja'));
+
+    rows.forEach((row, idx) => {
+      const rN = 5 + idx;
+      const vals = [row.t, row.c || null, row.u || null, row.d || null, row.r || null, row.total, row.areas.join('、'), row.score, row.risk];
+      vals.forEach((v, ci) => { const cell = ws.getCell(rN, ci + 1); cell.value = v; cell.font = F.DATA; cell.alignment = WRAP_TOP; });
+      if (row.d > 0) ws.getCell(rN, 4).fill = fill(C.D);
+      ws.getCell(rN, 7).fill = fill(C.AREA); ws.getCell(rN, 7).font = F.AREA;
+      const rc = ws.getCell(rN, 9);
+      if (row.risk.startsWith('高')) { rc.fill = fill(C.D); rc.font = F.BOLD; }
+      else if (row.risk.startsWith('中')) rc.fill = fill(C.U);
+    });
+    ws.autoFilter = `A4:I${4 + rows.length}`;
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+  }
+
+  function buildDeletePages(wb, pages) {
+    const ws = wb.addWorksheet('削除リスク台帳');
+    [5, 34, 18, 34, 14, 10].forEach((w, i) => ws.getColumn(i + 1).width = w);
+    ws.getCell(1, 1).value = '削除リスク台帳 ― レコード削除(D)を行う箇所。改修時は特に注意'; ws.getCell(1, 1).font = F.BOLD;
+    ws.getCell(2, 1).value = '確認ダイアログ「なし」＝誤操作で即削除される高リスク。上位に並べています。'; ws.getCell(2, 1).font = F.ITALIC_GRAY;
+    ['No', 'ページ名', '業務領域', '削除テーブル', '確認ダイアログ', 'リスク'].forEach((h, i) => hdr(ws, 4, i + 1, h));
+
+    const rows = [];
+    for (const p of pages) {
+      for (const t of p.D) {
+        const nc = (p.Dnoconfirm || []).includes(t);
+        rows.push({ no: p.no, name: p.name, area: p.area, table: t, confirm: nc ? 'なし' : 'あり', risk: nc ? '高' : '中', nc });
+      }
+    }
+    rows.sort((a, b) => (a.nc !== b.nc ? (a.nc ? -1 : 1) : (a.area.localeCompare(b.area, 'ja') || a.name.localeCompare(b.name, 'ja'))));
+
+    rows.forEach((row, idx) => {
+      const rN = 5 + idx;
+      const vals = [row.no, row.name, row.area, row.table, row.confirm, row.risk];
+      vals.forEach((v, ci) => { const cell = ws.getCell(rN, ci + 1); cell.value = v; cell.font = F.DATA; cell.alignment = WRAP_TOP; });
+      if (row.nc) {
+        ws.getCell(rN, 5).fill = fill(C.D); ws.getCell(rN, 5).font = F.BOLD;
+        ws.getCell(rN, 6).fill = fill(C.D); ws.getCell(rN, 6).font = F.BOLD;
+      } else {
+        ws.getCell(rN, 6).fill = fill(C.U);
+      }
+    });
+    ws.autoFilter = `A4:F${4 + rows.length}`;
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+  }
+
+  // ── ① 関連図（Mermaid Markdown）──────────────────────────────
+  function mmNode(s) { return String(s).replace(/[^0-9A-Za-z\u3040-\u30FF\u4E00-\u9FFF]/g, '_'); }
+  function mmLabel(s) { return String(s).replace(/"/g, '＂'); }
+
+  function buildMermaidDoc(pages) {
+    const today = new Date().toISOString().slice(0, 10);
+    const nameToArea = {};
+    for (const p of pages) nameToArea[p.name] = p.area;
+
+    // (A) 業務領域フロー: ページ遷移を領域→領域に集約
+    const areaEdges = {};
+    for (const p of pages) {
+      for (const tgt of p.transitions) {
+        const ta = nameToArea[tgt];
+        if (!ta || ta === p.area) continue;
+        const key = p.area + '\u0000' + ta;
+        areaEdges[key] = (areaEdges[key] || 0) + 1;
+      }
+    }
+    const allAreas = Array.from(new Set(pages.map((p) => p.area))).sort((a, b) => a.localeCompare(b, 'ja'));
+
+    let flowA = 'flowchart LR\n';
+    for (const a of allAreas) flowA += `  ${mmNode(a)}["${mmLabel(a)}"]\n`;
+    const edgesA = Object.entries(areaEdges).sort((x, y) => y[1] - x[1]);
+    for (const [k, n] of edgesA) {
+      const [f, t] = k.split('\u0000');
+      flowA += `  ${mmNode(f)} -->|${n}| ${mmNode(t)}\n`;
+    }
+
+    // (B) 共有テーブル: 2領域以上がさわるテーブルと、関与領域の関係
+    const tblAreas = {};
+    for (const p of pages) {
+      for (const t of new Set([].concat(p.C, p.U, p.D, p.R))) {
+        (tblAreas[t] = tblAreas[t] || new Set()).add(p.area);
+      }
+    }
+    const shared = Object.entries(tblAreas).filter(([, s]) => s.size >= 2)
+      .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0], 'ja'));
+
+    let flowB = 'flowchart LR\n';
+    if (shared.length === 0) {
+      flowB += '  none["複数領域で共有されるテーブルはありません"]\n';
+    } else {
+      const usedAreas = new Set();
+      for (const [t, s] of shared) for (const a of s) usedAreas.add(a);
+      for (const a of usedAreas) flowB += `  ${mmNode('A_' + a)}["${mmLabel(a)}"]\n`;
+      for (const [t, s] of shared) {
+        flowB += `  ${mmNode('T_' + t)}(["${mmLabel(t)}"]):::shared\n`;
+        for (const a of s) flowB += `  ${mmNode('A_' + a)} --- ${mmNode('T_' + t)}\n`;
+      }
+      flowB += '  classDef shared fill:#FFE08A,stroke:#B5840C,stroke-width:2px;\n';
+    }
+
+    // (C) 領域別 主要テーブル（テキスト）
+    const ownedByArea = {};
+    for (const [t, s] of Object.entries(tblAreas)) {
+      if (s.size === 1) { const a = Array.from(s)[0]; (ownedByArea[a] = ownedByArea[a] || []).push(t); }
+    }
+
+    let md = `# データ関連図\n\n生成日: ${today} ／ CRUD一覧ジェネレーター\n\n`;
+    md += `> ${DISCLAIMER}\n\n`;
+    md += `> GitHub上やMermaid対応ビューアでそのまま図として表示されます。\n\n`;
+    md += `## 1. 業務フロー（画面遷移を業務領域でまとめたもの）\n\n`;
+    md += '```mermaid\n' + flowA + '```\n\n';
+    md += `## 2. 共有テーブル（複数の業務領域がさわる＝改修要注意）\n\n`;
+    md += '黄色のノードが共有テーブル。1つ直すと複数領域に影響します。\n\n';
+    md += '```mermaid\n' + flowB + '```\n\n';
+    md += `## 3. 業務領域ごとの専有テーブル（その領域のみが操作）\n\n`;
+    for (const a of allAreas) {
+      const list = (ownedByArea[a] || []).sort((x, y) => x.localeCompare(y, 'ja'));
+      md += `### ${a}\n`;
+      md += list.length ? list.map((t) => `- ${t}`).join('\n') + '\n\n' : '（専有テーブルなし）\n\n';
+    }
+    md += `## 共有テーブル一覧（関与領域つき）\n\n`;
+    if (shared.length === 0) md += '（なし）\n';
+    else for (const [t, s] of shared) md += `- **${t}** … ${Array.from(s).sort((a, b) => a.localeCompare(b, 'ja')).join('、')}\n`;
+    md += '\n';
+    return md;
   }
 
   // =====================================================================
@@ -622,6 +777,7 @@
 
     report('Excel を生成中…');
     const wb = buildWorkbook(pages);
+    const mermaid = buildMermaidDoc(pages);
 
     const stats = {
       total: pages.length,
@@ -630,12 +786,12 @@
       numbered: Object.keys(noMap).length,
       areas: areaCounts(pages),
     };
-    return { workbook: wb, pages, stats };
+    return { workbook: wb, pages, stats, mermaid };
   }
 
   return {
     loadJsonText, shortType, describeCmd, parsePageJson, classifyArea,
     SSC_NOTES, getNote, extractPagesFromFgcp, loadPageNumbers,
-    buildWorkbook, generate, diagnose, walkTypes,
+    buildWorkbook, buildImpact, buildMermaidDoc, generate, diagnose, walkTypes,
   };
 });

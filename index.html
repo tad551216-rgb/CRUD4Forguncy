@@ -150,6 +150,7 @@
     background:var(--c); border:none; border-radius:var(--radius); cursor:pointer; box-shadow:3px 3px 0 var(--ink);
   }
   .download:hover{transform:translate(-1px,-1px)}
+  .download.alt{margin-top:9px; background:var(--ink); box-shadow:3px 3px 0 var(--grid-bold)}
 
   /* ── ファイル選択ボタン ── */
   .pick{
@@ -167,6 +168,8 @@
 
   footer{margin-top:30px; text-align:center; font:11px/1.6 var(--mono); color:var(--ink-soft)}
   .badge{display:inline-block; border:1px solid var(--line); border-radius:99px; padding:2px 9px; margin:0 3px}
+  .disclaimer{margin-top:26px; padding:13px 15px; font-size:11.5px; line-height:1.7; color:var(--ink-soft); background:var(--paper2); border:1px solid var(--line); border-radius:var(--radius)}
+  .disclaimer strong{color:var(--ink)}
 
   @media (max-width:480px){ .stats{grid-template-columns:repeat(3,1fr)} .stat .n{font-size:20px} }
   @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
@@ -244,8 +247,13 @@
       </div>
       <div class="areas" id="areas"></div>
       <button class="download" id="download">Excelをダウンロード</button>
+      <button class="download alt" id="downloadMd">関連図（.md）をダウンロード</button>
     </div>
   </div>
+
+  <p class="disclaimer">
+    <strong>免責事項</strong>：本ツールおよび生成物は<strong>無保証</strong>で提供されます。出力結果の正確性・完全性は保証されません。ご利用は<strong>自己責任</strong>で行ってください。本ツールの使用または使用不能、出力結果の利用によって生じたいかなる損害についても、作者・提供者は一切の責任を負いません。
+  </p>
 
   <footer>
     <span class="badge" id="offlineBadge">オフライン対応</span>
