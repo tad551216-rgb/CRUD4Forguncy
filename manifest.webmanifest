@@ -1,5 +1,5 @@
 {
-  "name": "CAS CRUD一覧ジェネレーター",
+  "name": "CRUD一覧ジェネレーター",
   "short_name": "CRUD一覧",
   "description": "Forguncyの.fgcpからページ別CRUD一覧Excelを生成。すべて端末内で処理。",
   "start_url": "./",

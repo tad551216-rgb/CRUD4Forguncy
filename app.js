@@ -47,7 +47,7 @@
     if (b > 1024) return (b / 1024).toFixed(0) + ' KB';
     return b + ' B';
   }
-  function refreshGo() { $('go').disabled = !state.fgcp; }
+  function refreshGo() { $('go').disabled = !state.fgcp; $('diag').disabled = !state.fgcp; }
   function showError(msg) { const e = $('error'); e.textContent = '⚠ ' + msg; e.classList.add('show'); }
   function clearError() { $('error').classList.remove('show'); }
 
@@ -89,7 +89,7 @@
       const buf = await result.workbook.xlsx.writeBuffer();
       state.blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      state.filename = `CAS_ページ別CRUD一覧_${today}.xlsx`;
+      state.filename = `ページ別CRUD一覧_${today}.xlsx`;
 
       setProgress('完了', 100);
       setTimeout(hideProgress, 400);
@@ -124,6 +124,64 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   });
+
+  // ---- 対応診断 ----
+  $('diag').addEventListener('click', async () => {
+    if (!state.fgcp) return;
+    clearError();
+    $('diagPanel').classList.remove('show');
+    $('diag').disabled = true;
+    try {
+      setProgress('診断中…', null);
+      const buf = await state.fgcp.arrayBuffer();
+      const d = await window.CrudCore.diagnose(buf, (done, total) => {
+        setProgress(`診断中… ${done} / ${total}`, Math.round((done / total) * 100));
+      });
+      setTimeout(hideProgress, 300);
+      renderDiag(d);
+    } catch (err) {
+      hideProgress();
+      showError(err && err.message ? err.message : String(err));
+    } finally {
+      $('diag').disabled = !state.fgcp;
+    }
+  });
+
+  function chips(obj, bad) {
+    const keys = Object.keys(obj).sort();
+    if (!keys.length) return '<span class="k" style="color:var(--ink-soft)">なし</span>';
+    return keys.map((t) => `<span class="tag2 ${bad ? 'bad' : 'ok'}">${escapeHtml(t)} ×${obj[t]}</span>`).join('');
+  }
+
+  function renderDiag(d) {
+    const v = $('diagVerdict');
+    v.className = 'verdict ' + d.verdict;
+    v.textContent = d.verdict === 'ok' ? '○ 使えます'
+      : d.verdict === 'warn' ? '△ 使えますが一部漏れの可能性'
+      : '× 構造が異なる可能性';
+    $('diagText').textContent = d.verdictText;
+
+    const rows = [
+      ['ページJSON 検出', d.pagesFound + ' 件'],
+      ['パース成功', d.parseOk + ' / ' + d.pagesFound + (d.parseErrors.length ? '（失敗 ' + d.parseErrors.length + '）' : '')],
+      ['AttachInfos 無し', d.noAttach + ' ページ'],
+      ['末尾署名あり', d.withSignature + ' / ' + d.pagesFound],
+    ];
+    $('diagGrid').innerHTML = rows.map((r) =>
+      `<div class="grow"><span class="k">${r[0]}</span><span class="v">${escapeHtml(String(r[1]))}</span></div>`).join('');
+
+    const pick = (keys, counts) => { const o = {}; keys.forEach((t) => o[t] = counts[t]); return o; };
+    const utRows = Object.keys(d.updateTypes).sort().map((k) => `${k}:${d.updateTypes[k]}`).join('  ') || 'なし';
+
+    $('diagTypes').innerHTML =
+      '<h4>認識できるコマンド</h4>' + chips(pick(d.knownCmds, d.cmdCounts), false) +
+      '<h4>未対応のコマンド（拾えない可能性）</h4>' + chips(pick(d.unknownCmds, d.cmdCounts), true) +
+      (d.unknownCells.length ? '<h4>未対応のセル種別</h4>' + chips(pick(d.unknownCells, d.cellCounts), true) : '') +
+      '<h4>UpdateType の内訳（「(未指定)」が多いと C↔U の取り違え注意）</h4><span class="tag2">' + escapeHtml(utRows) + '</span>';
+
+    $('diagPanel').classList.add('show');
+    $('diagPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 
   // ---- 初期化 ----
   wireSlot('slotFgcp', 'inputFgcp', 'fileFgcp', 'fgcp', ['.fgcp', '.zip']);

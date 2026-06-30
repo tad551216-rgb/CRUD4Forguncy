@@ -1,5 +1,5 @@
 /* =====================================================================
- * crud-core.js — CAS CRUD一覧 生成コア (generate_crud.py のJS移植)
+ * crud-core.js — ページ別CRUD一覧 生成コア (generate_crud.py のJS移植)
  * ---------------------------------------------------------------------
  * ブラウザでもNode(テスト)でも動くよう、JSZip / ExcelJS はグローバル参照。
  * ブラウザ : <script src="vendor/jszip.min.js"> 等で window に載る
@@ -335,7 +335,7 @@
 
   function buildWorkbook(pages) {
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'CAS CRUD PWA';
+    wb.creator = 'CRUD一覧ジェネレーター';
     buildSummary(wb, pages);
     buildMatrix(wb, pages);
     buildTableIndex(wb, pages);
@@ -354,9 +354,9 @@
     ws.getColumn(1).width = 38;
     ws.getColumn(2).width = 8;
 
-    ws.getCell(1, 1).value = 'CASシステム ページ別CRUD一覧'; ws.getCell(1, 1).font = F.BOLD;
+    ws.getCell(1, 1).value = 'ページ別CRUD一覧'; ws.getCell(1, 1).font = F.BOLD;
     const today = new Date().toISOString().slice(0, 10);
-    ws.getCell(2, 1).value = `生成日: ${today}  (CAS CRUD PWA)`; ws.getCell(2, 1).font = F.ITALIC_GRAY;
+    ws.getCell(2, 1).value = `生成日: ${today}  (CRUD一覧ジェネレーター)`; ws.getCell(2, 1).font = F.ITALIC_GRAY;
 
     const writePages = pages.filter((p) => p.C.length || p.U.length || p.D.length);
     const rOnly = pages.filter((p) => p.R.length && !p.C.length && !p.U.length && !p.D.length);
@@ -408,7 +408,7 @@
     const widths = { 1: 5, 2: 30, 3: 16, 4: 24, 5: 36, 6: 28, 7: 20, 8: 42, 9: 18, 10: 35 };
     for (const k in widths) ws.getColumn(Number(k)).width = widths[k];
 
-    ws.getCell(1, 1).value = 'CASシステム ページ別CRUD一覧'; ws.getCell(1, 1).font = F.BOLD;
+    ws.getCell(1, 1).value = 'ページ別CRUD一覧'; ws.getCell(1, 1).font = F.BOLD;
     ws.getCell(2, 1).value = 'C=作成(緑) / R=参照 / U=更新(黄) / D=削除(橙)　※書き込み系を色分け';
     ws.getCell(2, 1).font = F.ITALIC_GRAY;
 
@@ -497,7 +497,103 @@
   }
 
   // =====================================================================
-  // 7. オーケストレーター
+  // 7. 対応診断（バージョン互換チェック）
+  //    ページJSONを再帰走査し、全$type・UpdateType内訳・構造の有無を集計
+  // =====================================================================
+
+  const KNOWN_CMD = new Set(['UpdateDataTableCommand', 'ConditionCommand', 'NavigateCommand', 'ShowPopupCommand', 'QueryCommand', 'LoopCommand']);
+  const KNOWN_CELL = new Set(['ButtonCellType', 'DropDownListCellType', 'ComboBoxCellType']);
+
+  function walkTypes(node, acc, depth) {
+    if (depth > 200 || node == null) return;
+    if (Array.isArray(node)) { for (const x of node) walkTypes(x, acc, depth + 1); return; }
+    if (typeof node === 'object') {
+      const t = node['$type'];
+      if (t) {
+        const s = shortType(t);
+        acc.types[s] = (acc.types[s] || 0) + 1;
+        if (s === 'UpdateDataTableCommand') {
+          const ut = node.UpdateType == null ? '(未指定)' : String(node.UpdateType);
+          acc.updateTypes[ut] = (acc.updateTypes[ut] || 0) + 1;
+        }
+      }
+      for (const k in node) walkTypes(node[k], acc, depth + 1);
+    }
+  }
+
+  async function diagnose(arrayBuffer, onProgress) {
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const pageEntries = [];
+    let anyJson = 0;
+    zip.forEach((p, f) => {
+      if (f.dir) return;
+      if (/\.json$/i.test(p)) anyJson++;
+      if (/^Pages\/[^/]+\.json$/i.test(p)) pageEntries.push(f);
+    });
+
+    const acc = { types: {}, updateTypes: {} };
+    let parseOk = 0, withSig = 0, noAttach = 0;
+    const parseErrors = [];
+    const total = pageEntries.length;
+    let i = 0;
+    for (const f of pageEntries) {
+      const name = f.name.replace(/^Pages\//i, '').replace(/\.json$/i, '');
+      const raw = await f.async('string');
+      if (raw.lastIndexOf('}//') > 0) withSig++;
+      let d;
+      try { d = loadJsonText(raw); parseOk++; }
+      catch (e) { parseErrors.push({ page: name, error: String(e) }); i++; continue; }
+      if (!d.AttachInfos || typeof d.AttachInfos !== 'object') noAttach++;
+      walkTypes(d, acc, 0);
+      i++;
+      if (onProgress && (i % 20 === 0 || i === total)) { onProgress(i, total); await new Promise((r) => setTimeout(r, 0)); }
+    }
+
+    const cmds = {}, cells = {}, others = {};
+    for (const [t, n] of Object.entries(acc.types)) {
+      if (t.endsWith('Command')) cmds[t] = n;
+      else if (t.endsWith('CellType')) cells[t] = n;
+      else others[t] = n;
+    }
+    const unknownCmds = Object.keys(cmds).filter((t) => !KNOWN_CMD.has(t)).sort();
+    const knownCmds = Object.keys(cmds).filter((t) => KNOWN_CMD.has(t)).sort();
+    const unknownCells = Object.keys(cells).filter((t) => !KNOWN_CELL.has(t)).sort();
+    const knownCells = Object.keys(cells).filter((t) => KNOWN_CELL.has(t)).sort();
+
+    // 総合判定
+    let verdict, verdictText;
+    if (total === 0) {
+      verdict = 'ng';
+      verdictText = anyJson > 0
+        ? 'Pages/ 直下に *.json がありません。別のフォルダ構成（古い形式の可能性）です。'
+        : 'JSONページが見つかりません。.fgcp ではない、または未対応の形式の可能性があります。';
+    } else if (parseOk === 0) {
+      verdict = 'ng';
+      verdictText = 'ページJSONを1件もパースできませんでした。構造が大きく異なる可能性があります。';
+    } else if (noAttach >= Math.ceil(total * 0.5)) {
+      verdict = 'ng';
+      verdictText = '多くのページで AttachInfos が見つかりません。この版ではセルの格納構造が異なり、抽出できない可能性があります。';
+    } else if (unknownCmds.length > 0 || (acc.updateTypes['(未指定)'] || 0) > 0 || noAttach > 0 || parseErrors.length > 0) {
+      verdict = 'warn';
+      verdictText = 'おおむね使えますが、未対応のコマンドやUpdateType未指定などがあり、一部の書き込みが拾えていない可能性があります。出力件数を実態と照合してください。';
+    } else {
+      verdict = 'ok';
+      verdictText = '認識できる構造です。問題なく使えると見込まれます。';
+    }
+
+    return {
+      verdict, verdictText,
+      pagesFound: total, anyJson, parseOk, parseErrors,
+      withSignature: withSig, noAttach,
+      knownCmds, unknownCmds, cmdCounts: cmds,
+      knownCells, unknownCells, cellCounts: cells,
+      otherTypes: others,
+      updateTypes: acc.updateTypes,
+    };
+  }
+
+  // =====================================================================
+  // 8. オーケストレーター
   // =====================================================================
 
   async function generate(opts) {
@@ -540,6 +636,6 @@
   return {
     loadJsonText, shortType, describeCmd, parsePageJson, classifyArea,
     SSC_NOTES, getNote, extractPagesFromFgcp, loadPageNumbers,
-    buildWorkbook, generate,
+    buildWorkbook, generate, diagnose, walkTypes,
   };
 });
