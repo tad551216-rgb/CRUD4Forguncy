@@ -1,11 +1,12 @@
 /* sw.js — オフライン用 Service Worker
  * アプリシェル + ライブラリをキャッシュ。バージョンを上げると更新が反映される。 */
-const CACHE = 'crud-v3';
+const CACHE = 'crud-v4';
 const ASSETS = [
   './',
   './index.html',
   './app.js',
   './crud-core.js',
+  './worker-core.js',
   './manifest.webmanifest',
   './vendor/jszip.min.js',
   './vendor/exceljs.min.js',

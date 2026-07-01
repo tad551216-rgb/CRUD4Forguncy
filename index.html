@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>CRUD一覧ジェネレーター ｜ CAS</title>
+<title>CRUD一覧ジェネレーター ｜ Forguncy</title>
 <meta name="description" content="Forguncyのプロジェクトファイルからページ別CRUD一覧Excelを作る。すべて端末内で処理。">
 <meta name="theme-color" content="#20304F">
 <link rel="manifest" href="manifest.webmanifest">
@@ -101,6 +101,41 @@
   .go:active:not(:disabled){transform:translate(2px,2px); box-shadow:2px 2px 0 var(--ink)}
   .go:disabled{background:#C9C2B1; box-shadow:4px 4px 0 var(--grid-bold); cursor:not-allowed}
 
+  .cancel-btn{
+    display:none; width:100%; margin-top:9px; padding:11px; font-family:var(--gothic); font-size:13.5px; font-weight:700;
+    color:var(--d); background:#fff; border:1.5px solid var(--d); border-radius:var(--radius); cursor:pointer;
+  }
+  .cancel-btn.show{display:block}
+  .cancel-btn:active{background:var(--d-bg)}
+
+  .notice{display:none; margin-top:14px; background:var(--paper2); border:1.5px solid var(--line); border-radius:var(--radius); padding:12px 14px; font-size:13.5px; color:var(--ink-soft)}
+  .notice.show{display:block}
+
+  /* ── 診断ボタン・パネル ── */
+  .diag-btn{
+    width:100%; margin-top:10px; padding:12px; font-family:var(--gothic); font-size:14px; font-weight:700;
+    color:var(--ink); background:transparent; border:1.5px solid var(--ink); border-radius:var(--radius);
+    cursor:pointer;
+  }
+  .diag-btn:hover:not(:disabled){background:#fff}
+  .diag-btn:disabled{color:#A89F8B; border-color:var(--grid-bold); cursor:not-allowed}
+  .diag{display:none; margin-top:18px; background:#fff; border:1.5px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  .diag.show{display:block}
+  .diag .verdict{padding:12px 16px; font-weight:800; font-size:15px; display:flex; gap:9px; align-items:center; color:#fff}
+  .diag .verdict.ok{background:var(--c)}
+  .diag .verdict.warn{background:var(--u)}
+  .diag .verdict.ng{background:var(--d)}
+  .diag .vtext{padding:12px 16px; font-size:13.5px; border-bottom:1px dashed var(--line)}
+  .diag .grid{padding:10px 16px 4px; font-size:12.5px}
+  .diag .grow{display:flex; justify-content:space-between; gap:12px; padding:4px 0; border-bottom:1px dotted var(--line)}
+  .diag .grow .k{color:var(--ink-soft)}
+  .diag .grow .v{font-family:var(--mono); text-align:right}
+  .diag .types{padding:8px 16px 14px; font-size:12px}
+  .diag .types h4{margin:12px 0 5px; font-size:12px; letter-spacing:.06em}
+  .diag .tag2{display:inline-block; font-family:var(--mono); font-size:11.5px; padding:3px 7px; margin:3px 4px 0 0; border-radius:var(--radius); border:1px solid var(--line)}
+  .diag .tag2.ok{background:var(--c-bg); border-color:#9bd3ad}
+  .diag .tag2.bad{background:var(--d-bg); border-color:#eaa}
+
   /* ── 進捗 ── */
   .progress{display:none; margin-top:20px; background:#fff; border:1.5px solid var(--line); border-radius:var(--radius); padding:16px}
   .progress.show{display:block}
@@ -125,6 +160,17 @@
     background:var(--c); border:none; border-radius:var(--radius); cursor:pointer; box-shadow:3px 3px 0 var(--ink);
   }
   .download:hover{transform:translate(-1px,-1px)}
+  .download.alt{margin-top:9px; background:var(--ink); box-shadow:3px 3px 0 var(--grid-bold)}
+
+  /* ── ファイル選択ボタン ── */
+  .pick{
+    display:inline-flex; align-items:center; gap:7px; margin-top:11px;
+    font:700 14px/1 var(--gothic); color:#fff; background:var(--ink);
+    padding:11px 16px; border:none; border-radius:var(--radius); cursor:pointer;
+    box-shadow:2px 2px 0 var(--grid-bold);
+  }
+  .pick:active{transform:translate(1px,1px); box-shadow:1px 1px 0 var(--grid-bold)}
+  .slot.filled .pick{background:var(--c)}
 
   /* ── エラー ── */
   .error{display:none; margin-top:18px; background:#FFF1EE; border:1.5px solid var(--d); border-radius:var(--radius); padding:13px 15px; font-size:13.5px; color:var(--d)}
@@ -132,6 +178,8 @@
 
   footer{margin-top:30px; text-align:center; font:11px/1.6 var(--mono); color:var(--ink-soft)}
   .badge{display:inline-block; border:1px solid var(--line); border-radius:99px; padding:2px 9px; margin:0 3px}
+  .disclaimer{margin-top:26px; padding:13px 15px; font-size:11.5px; line-height:1.7; color:var(--ink-soft); background:var(--paper2); border:1px solid var(--line); border-radius:var(--radius)}
+  .disclaimer strong{color:var(--ink)}
 
   @media (max-width:480px){ .stats{grid-template-columns:repeat(3,1fr)} .stat .n{font-size:20px} }
   @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
@@ -140,7 +188,7 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="eyebrow">CAS / Forguncy 保守ツール</div>
+    <div class="eyebrow">Forguncy 保守ツール</div>
     <h1>CRUD一覧ジェネレーター</h1>
     <p class="sub">Forguncyの <code>.fgcp</code> を渡すと、ページ別CRUD一覧Excelを作ります。</p>
     <div class="crud-legend" aria-label="凡例">
@@ -155,7 +203,7 @@
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#20304F" stroke-width="2">
       <rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
     </svg>
-    <p><strong>ファイルはこの端末から出ません。</strong>解凍・解析・Excel生成はすべてブラウザ内で実行され、どこにも送信・保存されません。CASプロジェクトを安全に扱えます。</p>
+    <p><strong>ファイルはこの端末から出ません。</strong>解凍・解析・Excel生成はすべてブラウザ内で実行され、どこにも送信・保存されません。プロジェクトを安全に扱えます。</p>
   </div>
 
   <!-- ① .fgcp -->
@@ -164,9 +212,10 @@
     <button class="clear" data-clear="fgcp" type="button">×</button>
     <span class="tag req">必須 ・ .fgcp</span>
     <h3>Forguncyプロジェクトファイル</h3>
-    <p class="hint">ここにドロップ、またはタップして選択。コピーを推奨（元ファイルは変更しません）。</p>
+    <p class="hint">タップして <code>.fgcp</code> を選択（PCはドラッグ&ドロップも可）。コピー推奨（元ファイルは変更しません）。</p>
     <p class="file" id="fileFgcp"></p>
-    <input type="file" id="inputFgcp" accept=".fgcp,.zip" hidden>
+    <button class="pick" type="button">📁 ファイルを選択</button>
+    <input type="file" id="inputFgcp" hidden>
   </div>
 
   <!-- ② Forguncyドキュメント -->
@@ -177,10 +226,20 @@
     <h3>Forguncyドキュメント（ページ番号用）</h3>
     <p class="hint">「ドキュメント生成」で出力したExcel。付けるとページにNo.が入ります。省略可。</p>
     <p class="file" id="fileFgdoc"></p>
-    <input type="file" id="inputFgdoc" accept=".xlsx" hidden>
+    <button class="pick" type="button">📁 Excelを選択</button>
+    <input type="file" id="inputFgdoc" hidden>
   </div>
 
   <button class="go" id="go" disabled>CRUD一覧を生成</button>
+  <button class="cancel-btn" id="cancelBtn" type="button">処理を中止する</button>
+  <button class="diag-btn" id="diag" disabled>このファイルで使えるか診断する（①のみでOK）</button>
+
+  <div class="diag" id="diagPanel">
+    <div class="verdict" id="diagVerdict"></div>
+    <div class="vtext" id="diagText"></div>
+    <div class="grid" id="diagGrid"></div>
+    <div class="types" id="diagTypes"></div>
+  </div>
 
   <div class="progress" id="progress">
     <div class="label"><span id="progLabel">準備中…</span><span id="progPct"></span></div>
@@ -188,6 +247,7 @@
   </div>
 
   <div class="error" id="error"></div>
+  <div class="notice" id="notice"></div>
 
   <div class="result" id="result">
     <div class="head">✓ 生成完了</div>
@@ -199,8 +259,13 @@
       </div>
       <div class="areas" id="areas"></div>
       <button class="download" id="download">Excelをダウンロード</button>
+      <button class="download alt" id="downloadMd">関連図（.md）をダウンロード</button>
     </div>
   </div>
+
+  <p class="disclaimer">
+    <strong>免責事項</strong>：本ツールおよび生成物は<strong>無保証</strong>で提供されます。出力結果の正確性・完全性は保証されません。ご利用は<strong>自己責任</strong>で行ってください。本ツールの使用または使用不能、出力結果の利用によって生じたいかなる損害についても、作者・提供者は一切の責任を負いません。
+  </p>
 
   <footer>
     <span class="badge" id="offlineBadge">オフライン対応</span>
@@ -210,9 +275,6 @@
   </footer>
 </div>
 
-<script src="vendor/jszip.min.js"></script>
-<script src="vendor/exceljs.min.js"></script>
-<script src="crud-core.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

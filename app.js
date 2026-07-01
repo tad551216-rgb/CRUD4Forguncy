@@ -1,9 +1,12 @@
-/* app.js — UIグルー（crud-core.js を呼ぶ） */
+/* app.js — UIグルー。重い処理はすべて Web Worker で実行し、画面を固まらせない。 */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
 
-  const state = { fgcp: null, fgdoc: null, blob: null, filename: null, mermaid: null, mdName: null };
+  const state = {
+    fgcp: null, fgdoc: null, blob: null, filename: null, mermaid: null, mdName: null,
+    worker: null, workerBlobURL: null, busy: false,
+  };
 
   // ---- ドロップゾーン配線 ----
   function wireSlot(slotId, inputId, fileLabelId, kind, accept) {
@@ -47,9 +50,15 @@
     if (b > 1024) return (b / 1024).toFixed(0) + ' KB';
     return b + ' B';
   }
-  function refreshGo() { $('go').disabled = !state.fgcp; $('diag').disabled = !state.fgcp; }
+  function refreshGo() {
+    $('go').disabled = !state.fgcp || state.busy;
+    $('diag').disabled = !state.fgcp || state.busy;
+  }
   function showError(msg) { const e = $('error'); e.textContent = '⚠ ' + msg; e.classList.add('show'); }
   function clearError() { $('error').classList.remove('show'); }
+  function showNotice(msg) { const n = $('notice'); n.textContent = msg; n.classList.add('show'); }
+  function clearNotice() { $('notice').classList.remove('show'); }
+  function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
   // ---- 進捗 ----
   function setProgress(label, pct) {
@@ -60,47 +69,136 @@
   }
   function hideProgress() { $('progress').classList.remove('show'); }
 
-  // ---- 実行 ----
+  // ---- ビジー状態の切り替え ----
+  function setBusy(isBusy) {
+    state.busy = isBusy;
+    refreshGo();
+    $('cancelBtn').classList.toggle('show', isBusy);
+  }
+
+  // =====================================================================
+  // Worker管理: 単一版は埋め込みソースから、複数ファイル版は fetch で構築
+  // =====================================================================
+  async function getWorkerBlobURL() {
+    if (state.workerBlobURL) return state.workerBlobURL;
+    let src;
+    const embedded = document.getElementById('workerSrc');
+    if (embedded && embedded.textContent && embedded.textContent.trim().length > 1000) {
+      // 単一版HTML: ワーカーのソースがDOMに埋め込まれている
+      src = embedded.textContent;
+    } else {
+      // 複数ファイル版: 同一オリジンの相対ファイルを取得して連結
+      const paths = ['vendor/jszip.min.js', 'vendor/exceljs.min.js', 'crud-core.js', 'worker-core.js'];
+      const texts = await Promise.all(paths.map((p) => fetch(p).then((r) => {
+        if (!r.ok) throw new Error(`${p} の読み込みに失敗しました (${r.status})`);
+        return r.text();
+      })));
+      src = texts.join('\n;\n');
+    }
+    const blob = new Blob([src], { type: 'application/javascript' });
+    state.workerBlobURL = URL.createObjectURL(blob);
+    return state.workerBlobURL;
+  }
+
+  async function getWorker() {
+    if (state.worker) return state.worker;
+    const url = await getWorkerBlobURL();
+    state.worker = new Worker(url);
+    return state.worker;
+  }
+
+  function killWorker() {
+    if (state.worker) {
+      try { state.worker.terminate(); } catch (e) { /* ignore */ }
+      state.worker = null;
+    }
+  }
+
+  // 指定コマンドをWorkerへ送り、完了/エラー/進捗を処理する共通ヘルパ
+  function runInWorker(msg, transfer, onProgress) {
+    return new Promise(async (resolve, reject) => {
+      let worker;
+      try {
+        worker = await getWorker();
+      } catch (err) {
+        reject(new Error('処理の準備に失敗しました: ' + (err && err.message ? err.message : String(err))));
+        return;
+      }
+      const handleMessage = (e) => {
+        const data = e.data || {};
+        if (data.type === 'progress') {
+          if (onProgress) onProgress(data.ev);
+        } else if (data.type === 'error') {
+          cleanup();
+          reject(new Error(data.message));
+        } else if (data.type === 'generate-done' || data.type === 'diagnose-done') {
+          cleanup();
+          resolve(data);
+        }
+      };
+      const handleError = (e) => {
+        cleanup();
+        reject(new Error('処理中に問題が発生しました: ' + (e && e.message ? e.message : '不明なエラー')));
+      };
+      const cleanup = () => {
+        worker.removeEventListener('message', handleMessage);
+        worker.removeEventListener('error', handleError);
+      };
+      worker.addEventListener('message', handleMessage);
+      worker.addEventListener('error', handleError);
+      worker.postMessage(msg, transfer || []);
+    });
+  }
+
+  // ---- 中止 ----
+  $('cancelBtn').addEventListener('click', () => {
+    if (!state.busy) return;
+    killWorker();
+    setBusy(false);
+    hideProgress();
+    showNotice('処理を中止しました。ファイルはそのままなので、もう一度実行できます。');
+  });
+
+  // ---- 実行: CRUD一覧生成 ----
   $('go').addEventListener('click', async () => {
-    if (!state.fgcp) return;
-    clearError();
+    if (!state.fgcp || state.busy) return;
+    clearError(); clearNotice();
     $('result').classList.remove('show');
-    $('go').disabled = true;
+    setBusy(true);
     state.blob = null;
     try {
       setProgress('ファイルを読み込み中…', null);
       const fgcpBuf = await state.fgcp.arrayBuffer();
       const fgdocBuf = state.fgdoc ? await state.fgdoc.arrayBuffer() : null;
+      const transfer = [fgcpBuf]; if (fgdocBuf) transfer.push(fgdocBuf);
 
-      const result = await window.CrudCore.generate({
-        fgcpBuffer: fgcpBuf,
-        fgdocBuffer: fgdocBuf,
-        onProgress: (e) => {
-          if (e.stage === 'parse') {
-            const pct = Math.round((e.done / e.total) * 90);
-            setProgress(`ページ解析中… ${e.done} / ${e.total}`, pct);
-          } else if (e.stage === 'message') {
-            setProgress(e.message, e.message.indexOf('Excel') >= 0 ? 95 : null);
+      const data = await runInWorker(
+        { cmd: 'generate', fgcpBuffer: fgcpBuf, fgdocBuffer: fgdocBuf },
+        transfer,
+        (ev) => {
+          if (ev.stage === 'parse') {
+            const pct = Math.round((ev.done / ev.total) * 85);
+            setProgress(`ページ解析中… ${ev.done} / ${ev.total}`, pct);
+          } else if (ev.stage === 'message') {
+            setProgress(ev.message, ev.message.indexOf('Excel') >= 0 ? 92 : null);
           }
         }
-      });
+      );
 
-      setProgress('Excelを書き出し中…', 98);
-      const buf = await result.workbook.xlsx.writeBuffer();
-      state.blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      state.blob = new Blob([data.xlsx], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       state.filename = `ページ別CRUD一覧_${today}.xlsx`;
-      state.mermaid = result.mermaid || '';
+      state.mermaid = data.mermaid || '';
       state.mdName = `データ関連図_${today}.md`;
 
       setProgress('完了', 100);
       setTimeout(hideProgress, 400);
-      showResult(result.stats);
+      showResult(data.stats);
     } catch (err) {
       hideProgress();
       showError(err && err.message ? err.message : String(err));
     } finally {
-      $('go').disabled = !state.fgcp;
+      setBusy(false);
     }
   });
 
@@ -121,8 +219,6 @@
     $('result').classList.add('show');
     $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-
-  function escapeHtml(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
   $('download').addEventListener('click', () => {
     if (!state.blob) return;
@@ -145,23 +241,29 @@
 
   // ---- 対応診断 ----
   $('diag').addEventListener('click', async () => {
-    if (!state.fgcp) return;
-    clearError();
+    if (!state.fgcp || state.busy) return;
+    clearError(); clearNotice();
     $('diagPanel').classList.remove('show');
-    $('diag').disabled = true;
+    setBusy(true);
     try {
       setProgress('診断中…', null);
       const buf = await state.fgcp.arrayBuffer();
-      const d = await window.CrudCore.diagnose(buf, (done, total) => {
-        setProgress(`診断中… ${done} / ${total}`, Math.round((done / total) * 100));
-      });
+      const data = await runInWorker(
+        { cmd: 'diagnose', fgcpBuffer: buf },
+        [buf],
+        (ev) => {
+          if (ev.stage === 'parse' && ev.total) {
+            setProgress(`診断中… ${ev.done} / ${ev.total}`, Math.round((ev.done / ev.total) * 100));
+          }
+        }
+      );
       setTimeout(hideProgress, 300);
-      renderDiag(d);
+      renderDiag(data.result);
     } catch (err) {
       hideProgress();
       showError(err && err.message ? err.message : String(err));
     } finally {
-      $('diag').disabled = !state.fgcp;
+      setBusy(false);
     }
   });
 
@@ -215,6 +317,8 @@
   ['dragover', 'drop'].forEach((ev) => window.addEventListener(ev, (e) => {
     if (!e.target.closest('.slot')) e.preventDefault();
   }));
+
+  window.addEventListener('beforeunload', killWorker);
 
   // ---- Service Worker ----
   if ('serviceWorker' in navigator) {
