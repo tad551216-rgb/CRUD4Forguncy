@@ -1,6 +1,11 @@
+/* つくる手帖 ── キャッシュはオリジン単位で共有されます。
+   github.io は全リポジトリが同じオリジンなので、
+   自分の名前空間（TT_NS）のものだけを消します。 */
 /* sw.js — オフライン用 Service Worker
  * アプリシェル + ライブラリをキャッシュ。バージョンを上げると更新が反映される。 */
-const CACHE = 'crud-v4';
+const TT_NS = 'tt:CRUD4Forguncy:';
+const TT_OLD = 'crud-v4';   /* 旧名。次の更新のときに消して構いません */
+const CACHE = TT_NS + 'v4';
 const ASSETS = [
   './',
   './index.html',
@@ -21,7 +26,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    caches.keys().then((keys) => Promise.all(keys.filter(k => (k.startsWith(TT_NS) || k === TT_OLD) && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
